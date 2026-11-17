@@ -68,3 +68,15 @@ go build -trimpath ./...
 
 `config/example-*.yaml` demonstrates the typed contract. It is not deployment
 state. Consumers supply their own exact values from a separate private estate.
+
+## Maintained verification
+
+`just check` validates source without building or contacting a provider. On an
+execution host, `just setup`, `just test`, `just build` and `just verify` run the
+existing module/native/provenance checks through the owning Makefile. The CI
+derivative jobs separately call the declared classifier, source-drift and exact
+rebuild commands when their original input conditions apply. Controller stamping,
+release manifests and runtime operators remain owned by their existing tools.
+
+Source CI does not start a host controller, cloud provider, application or daemon.
+The existing advisory Gate policy and independent feedback workflows are unchanged.
