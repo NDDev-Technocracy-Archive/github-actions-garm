@@ -24,13 +24,23 @@ jobs:
       garm: ${{ steps.paths.outputs.garm }}
       provider: ${{ steps.paths.outputs.provider }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Select the existing manifest-owned Go compiler
+        id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Prepare the public CI job
         id: setup
         uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
           managed: 'false'
           fetch-depth: 0
-          go-version: '1.27.1'
+          go-version: ${{ steps.go.outputs.go-version }}
       - name: Resolve the provider's compiled package set
         id: packages
         run: just provider-packages
@@ -60,13 +70,23 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Select the existing manifest-owned Go compiler
+        id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Prepare the public CI job
         id: setup
         uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
           managed: 'false'
           fetch-depth: 1
-          go-version: '1.27.1'
+          go-version: ${{ steps.go.outputs.go-version }}
       - name: Verify declared module dependencies
         id: dependencies
         run: just setup
@@ -90,13 +110,23 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Select the existing manifest-owned Go compiler
+        id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Prepare the public CI job
         id: setup
         uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
           managed: 'false'
           fetch-depth: 1
-          go-version: '1.27.1'
+          go-version: ${{ steps.go.outputs.go-version }}
       - name: Verify declared module dependencies
         id: dependencies
         run: just setup
@@ -120,13 +150,23 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Select the existing manifest-owned Go compiler
+        id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Prepare the public CI job
         id: setup
         uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
           managed: 'false'
           fetch-depth: 1
-          go-version: '1.27.1'
+          go-version: ${{ steps.go.outputs.go-version }}
       - name: Verify declared module dependencies
         id: dependencies
         run: just setup
@@ -180,13 +220,23 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Select the existing manifest-owned Go compiler
+        id: go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Prepare the public CI job
         id: setup
         uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
           managed: 'false'
           fetch-depth: 0
-          go-version: '1.27.1'
+          go-version: ${{ steps.go.outputs.go-version }}
       - name: Resolve validated artifact identity
         id: release
         run: just provider-identity
