@@ -4,13 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
-  # Only stateless PR verification is superseded; main/manual runs keep unique groups.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -19,33 +18,22 @@ jobs:
     name: Derivative inputs
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       garm: ${{ steps.paths.outputs.garm }}
       provider: ${{ steps.paths.outputs.provider }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the public CI job
+        id: setup
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
+          managed: 'false'
           fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          # setup-go's cache saves from pull requests and shares one key between jobs
-          # that build differently; hosted-cache restores everywhere, saves from main.
-          cache: false
-      - uses: NDDev-Technocracy-Standarts/std-0004-ci-cd-workflows/.github/actions/hosted-cache@c192c6adcf22088abf456635de614d42e8fa3f8d # nddev-cicd-v0.6.20
-        with:
-          ecosystems: go
-          key: changes
+          go-version: '1.27.1'
       - name: Resolve the provider's compiled package set
         id: packages
-        run: |
-          set -euo pipefail
-          {
-            printf 'directories<<PACKAGES\n'
-            ./scripts/provider-package-directories.sh
-            printf 'PACKAGES\n'
-          } >>"${GITHUB_OUTPUT}"
+        run: just provider-packages
       - name: Classify derivative inputs
         id: paths
         env:
@@ -54,116 +42,106 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [[ "${EVENT_NAME}" == workflow_dispatch ]]; then
-            printf 'garm=true\nprovider=true\n' >>"${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          base="${BASE_SHA:-${BEFORE_SHA:-}}"
-          if [[ ! "${base}" =~ ^[0-9a-f]{40}$ || "${base}" == 0000000000000000000000000000000000000000 ]]; then
-            printf 'garm=true\nprovider=true\n' >>"${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          git cat-file -e "${base}^{commit}"
-          git cat-file -e "${HEAD_SHA}^{commit}"
-          ./scripts/validate-image-alias-advance.sh "${base}" "${HEAD_SHA}"
-          garm=false
-          provider=false
-          while IFS= read -r changed; do
-            case "${changed}" in
-              config/garm-derivative.yaml|scripts/build-garm-nddev.sh|third_party/garm/*|internal/garmderivative/*|go.mod|go.sum)
-                garm=true
-                ;;
-            esac
-            case "${changed}" in
-              config/provider-derivative.yaml|go.mod|go.sum)
-                provider=true
-                ;;
-              *)
-                # Every directory the provider binary actually compiles, read
-                # from the build graph rather than from a list maintained by
-                # hand. The hand-written list named eight of the eighteen
-                # internal packages `go list -deps` reports, so a change to
-                # internal/cachebroker or internal/queueintent -- both real
-                # provider dependencies -- skipped this job entirely and shipped
-                # under a manifest digest that no longer described main.
-                for directory in ${PROVIDER_PACKAGE_DIRECTORIES}; do
-                  case "${changed}" in
-                    "${directory}"/*.go) provider=true ;;
-                  esac
-                done
-                ;;
-            esac
-          done < <(git diff --name-only --diff-filter=ACMRT "${base}" "${HEAD_SHA}")
-          printf 'garm=%s\nprovider=%s\n' "${garm}" "${provider}" >>"${GITHUB_OUTPUT}"
+        run: just classify-derivatives
+      - name: Complete the public CI job
+        if: always()
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/complete@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
+        with:
+          status: ${{ job.status }}
+          project-outcome: ${{ steps.paths.outcome }}
+          task: derivative-inputs
+          name: derivative-inputs
+          read-token: ${{ steps.setup.outputs.read-token }}
 
   test:
     name: Test
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the public CI job
+        id: setup
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+          managed: 'false'
+          fetch-depth: 1
+          go-version: '1.27.1'
+      - name: Verify declared module dependencies
+        id: dependencies
+        run: just setup
+      - name: Run the existing Go and feedback fixture tests
+        id: project
+        run: just test-unit
+      - name: Complete the public CI job
+        if: always()
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/complete@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
-          go-version-file: go.mod
-          # setup-go's cache saves from pull requests and shares one key between jobs
-          # that build differently; hosted-cache restores everywhere, saves from main.
-          cache: false
-      - uses: NDDev-Technocracy-Standarts/std-0004-ci-cd-workflows/.github/actions/hosted-cache@c192c6adcf22088abf456635de614d42e8fa3f8d # nddev-cicd-v0.6.20
-        with:
-          ecosystems: go
-          key: test
-      - run: go mod download
-      - run: go mod verify
-      - run: go test ./...
-      - name: Test background CI feedback
-        run: python3 -m unittest discover -s tests -p test_ci_feedback.py -v
+          status: ${{ job.status }}
+          project-outcome: ${{ steps.dependencies.outcome == 'failure' && 'failure' || steps.project.outcome }}
+          task: unit-tests
+          name: unit-tests
+          read-token: ${{ steps.setup.outputs.read-token }}
 
   race:
     name: Race
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the public CI job
+        id: setup
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+          managed: 'false'
+          fetch-depth: 1
+          go-version: '1.27.1'
+      - name: Verify declared module dependencies
+        id: dependencies
+        run: just setup
+      - name: Run the existing race detector
+        id: project
+        run: just test-race
+      - name: Complete the public CI job
+        if: always()
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/complete@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
-          go-version-file: go.mod
-          # setup-go's cache saves from pull requests and shares one key between jobs
-          # that build differently; hosted-cache restores everywhere, saves from main.
-          cache: false
-      - uses: NDDev-Technocracy-Standarts/std-0004-ci-cd-workflows/.github/actions/hosted-cache@c192c6adcf22088abf456635de614d42e8fa3f8d # nddev-cicd-v0.6.20
-        with:
-          ecosystems: go
-          key: race
-      - run: go test -race ./...
+          status: ${{ job.status }}
+          project-outcome: ${{ steps.dependencies.outcome == 'failure' && 'failure' || steps.project.outcome }}
+          task: race-tests
+          name: race-tests
+          read-token: ${{ steps.setup.outputs.read-token }}
 
   static:
     name: Static and build
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the public CI job
+        id: setup
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+          managed: 'false'
+          fetch-depth: 1
+          go-version: '1.27.1'
+      - name: Verify declared module dependencies
+        id: dependencies
+        run: just setup
+      - name: Verify formats, both vet scopes, release metadata and ordinary builds
+        id: project
+        run: just verify-static
+      - name: Complete the public CI job
+        if: always()
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/complete@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
-          go-version-file: go.mod
-          # setup-go's cache saves from pull requests and shares one key between jobs
-          # that build differently; hosted-cache restores everywhere, saves from main.
-          cache: false
-      - uses: NDDev-Technocracy-Standarts/std-0004-ci-cd-workflows/.github/actions/hosted-cache@c192c6adcf22088abf456635de614d42e8fa3f8d # nddev-cicd-v0.6.20
-        with:
-          ecosystems: go
-          key: static
-      - run: test -z "$(gofmt -l cmd internal third_party)"
-      - run: go vet ./...
-      - run: go vet -C internal/incusplacement/starlarkexec ./...
-      - run: go build -trimpath ./...
+          status: ${{ job.status }}
+          project-outcome: ${{ steps.dependencies.outcome == 'failure' && 'failure' || steps.project.outcome }}
+          task: static-build
+          name: static-build
+          read-token: ${{ steps.setup.outputs.read-token }}
 
   derivative:
     name: Reproducible GARM derivative
@@ -171,11 +149,27 @@ jobs:
     if: ${{ needs.changes.outputs.garm == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the public CI job
+        id: setup
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
-          persist-credentials: false
-      - run: make build-garm-derivative
+          managed: 'false'
+          fetch-depth: 1
+      - name: Build the declared GARM derivative
+        id: project
+        run: just build-garm-derivative
+      - name: Complete the public CI job
+        if: always()
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/complete@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
+        with:
+          status: ${{ job.status }}
+          project-outcome: ${{ steps.project.outcome }}
+          task: garm-derivative
+          name: garm-derivative
+          read-token: ${{ steps.setup.outputs.read-token }}
 
   provider-derivative:
     name: Reproducible provider derivative
@@ -183,68 +177,28 @@ jobs:
     if: ${{ needs.changes.outputs.provider == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - name: Checkout release manifest
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare the public CI job
+        id: setup
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
         with:
-          persist-credentials: false
+          managed: 'false'
           fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          # setup-go's cache saves from pull requests and shares one key between jobs
-          # that build differently; hosted-cache restores everywhere, saves from main.
-          cache: false
-      - uses: NDDev-Technocracy-Standarts/std-0004-ci-cd-workflows/.github/actions/hosted-cache@c192c6adcf22088abf456635de614d42e8fa3f8d # nddev-cicd-v0.6.20
-        with:
-          ecosystems: go
-          key: provider
+          go-version: '1.27.1'
       - name: Resolve validated artifact identity
         id: release
-        run: |
-          set -eu
-          {
-            printf 'version=%s\n' "$(go run ./cmd/gha-fleet provider-release --field derivative_version)"
-            printf 'source_commit=%s\n' "$(go run ./cmd/gha-fleet provider-release --field source_commit)"
-            printf 'binary_sha256=%s\n' "$(go run ./cmd/gha-fleet provider-release --field binary_sha256)"
-          } >>"${GITHUB_OUTPUT}"
+        run: just provider-identity
       - name: Resolve the provider's compiled package set
         id: packages
-        run: |
-          set -euo pipefail
-          {
-            printf 'directories<<PACKAGES\n'
-            ./scripts/provider-package-directories.sh
-            printf 'PACKAGES\n'
-          } >>"${GITHUB_OUTPUT}"
+        run: just provider-packages
       - name: Refuse provider source drift after the release commit
         env:
           SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
           HEAD_COMMIT: ${{ github.sha }}
           PROVIDER_PACKAGE_DIRECTORIES: ${{ steps.packages.outputs.directories }}
-        run: |
-          set -euo pipefail
-          git merge-base --is-ancestor "${SOURCE_COMMIT}" "${HEAD_COMMIT}"
-          drift=false
-          while IFS= read -r changed; do
-            case "${changed}" in
-              *_test.go) continue ;;
-              go.mod|go.sum)
-                printf 'provider release source drift: %s\n' "${changed}" >&2
-                drift=true
-                continue
-                ;;
-            esac
-            for directory in ${PROVIDER_PACKAGE_DIRECTORIES}; do
-              case "${changed}" in
-                "${directory}"/*.go)
-                  printf 'provider release source drift: %s\n' "${changed}" >&2
-                  drift=true
-                  ;;
-              esac
-            done
-          done < <(git diff --name-only --diff-filter=ACMRT "${SOURCE_COMMIT}" "${HEAD_COMMIT}")
-          [[ "${drift}" == false ]]
+        run: just check-provider-source
       - name: Checkout exact provider source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -252,23 +206,12 @@ jobs:
           ref: ${{ steps.release.outputs.source_commit }}
           path: provider-source
       - name: Rebuild and verify exact provider bytes
-        working-directory: provider-source
+        id: project
         env:
           VERSION: ${{ steps.release.outputs.version }}
           SOURCE_COMMIT: ${{ steps.release.outputs.source_commit }}
           EXPECTED_SHA256: ${{ steps.release.outputs.binary_sha256 }}
-        run: |
-          set -eu
-          for output in provider-a provider-b; do
-            CGO_ENABLED=0 go build -trimpath -buildvcs=false \
-              -ldflags "-buildid= -s -w -X main.version=${VERSION} -X main.commit=${SOURCE_COMMIT}" \
-              -o "${RUNNER_TEMP}/${output}" ./cmd/garm-provider-incus-nddev
-          done
-          cmp "${RUNNER_TEMP}/provider-a" "${RUNNER_TEMP}/provider-b"
-          actual_sha256="$(sha256sum "${RUNNER_TEMP}/provider-a" | awk '{print $1}')"
-          printf 'provider source=%s expected=%s actual=%s\n' \
-            "${SOURCE_COMMIT}" "${EXPECTED_SHA256}" "${actual_sha256}"
-          test "${actual_sha256}" = "${EXPECTED_SHA256}"
+        run: just qualify-provider
       - name: Publish verified provider candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -279,53 +222,62 @@ jobs:
           # whatever the org default happens to be.
           retention-days: 30
           if-no-files-found: error
+      - name: Complete the public CI job
+        if: always()
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/complete@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
+        with:
+          status: ${{ job.status }}
+          project-outcome: ${{ steps.project.outcome }}
+          task: provider-derivative
+          name: provider-derivative
+          read-token: ${{ steps.setup.outputs.read-token }}
+
+  workflows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Prepare the public CI job
+        id: setup
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/prepare@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
+        with:
+          managed: 'false'
+          fetch-depth: 0
+          tools: zizmor@1.32.0,shellcheck@0.11.0
+          tool-assets: .github/ci-tools.json
+      - name: Check source, workflows, extracted shell and complete Git history
+        id: project
+        run: just check-ci
+      - name: Complete the public CI job
+        if: always()
+        uses: NDDev-Technocracy-OpenNetwork/nddev-ci/actions/complete@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
+        with:
+          status: ${{ job.status }}
+          project-outcome: ${{ steps.project.outcome }}
+          task: workflow-source
+          name: workflow-source
+          read-token: ${{ steps.setup.outputs.read-token }}
+
+  merge-stops:
+    if: github.event_name == 'pull_request'
+    uses: NDDev-Technocracy-OpenNetwork/nddev-ci/.github/workflows/merge-stops.yml@98ff340ab5d2e0f62821a6ee25fd4161b87f59ba # v0.6.69
+    permissions:
+      contents: read
 
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: always()
-    needs: [changes, test, race, static, derivative, provider-derivative]
+    needs: [changes, test, race, static, derivative, provider-derivative, workflows, merge-stops]
+    permissions: {}
     steps:
-      - env:
-          CHANGES: ${{ needs.changes.result }}
-          TEST: ${{ needs.test.result }}
-          RACE: ${{ needs.race.result }}
-          STATIC: ${{ needs.static.result }}
-          DERIVATIVE: ${{ needs.derivative.result }}
-          PROVIDER_DERIVATIVE: ${{ needs.provider-derivative.result }}
-        run: |
-          set -eu
-          test "${CHANGES}" = success
-          test "${TEST}" = success
-          test "${RACE}" = success
-          test "${STATIC}" = success
-          test "${DERIVATIVE}" = success || test "${DERIVATIVE}" = skipped
-          test "${PROVIDER_DERIVATIVE}" = success || test "${PROVIDER_DERIVATIVE}" = skipped
-
-  workflows:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - uses: NDDev-Technocracy-Standarts/std-0004-ci-cd-workflows/.github/actions/tools@c192c6adcf22088abf456635de614d42e8fa3f8d # nddev-cicd-v0.6.20
-        with:
-          capability: security
-      - name: Lint and audit workflows
-        run: |
-          actionlint
-          zizmor --offline --no-progress .github/workflows/ci.yml .github/workflows/security.yml .github/dependabot.yml
-      - name: Scan new pull request commits, or the full history on main
+      - name: Report every actual producer and only declared derivative skips
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
+          NEEDS: ${{ toJSON(needs) }}
+          EXPECTED: >-
+            {"changes":"success","test":"success","race":"success","static":"success","derivative":"${{ needs.changes.outputs.garm == 'true' && 'success' || 'skipped' }}","provider-derivative":"${{ needs.changes.outputs.provider == 'true' && 'success' || 'skipped' }}","workflows":"success","merge-stops":"${{ github.event_name == 'pull_request' && 'success' || 'skipped' }}"}
         run: |
-          if [ -n "$BASE" ]; then
-            gitleaks git --no-banner --redact --log-opts="$BASE..$HEAD" .
-          else
-            gitleaks git --no-banner --redact .
-          fi
-
+          jq -e '.changes.outputs | (.garm == "true" or .garm == "false") and (.provider == "true" or .provider == "false")' <<< "$NEEDS"
+          jq -e --argjson want "$EXPECTED" 'map_values(.result) == $want' <<< "$NEEDS"
